@@ -8,7 +8,7 @@ from .auth import authenticate_user, create_access_token, get_password_hash, Tok
 from .models import User, Game, Move, GameStatus, PlayerSymbol
 from .state import (
     users, add_user, add_game, join_game,
-    get_game, record_move, games
+    get_game, record_move, games, list_games
 )
 
 app = FastAPI(
@@ -19,6 +19,7 @@ app = FastAPI(
         {"name": "health", "description": "Health check endpoint"},
         {"name": "auth", "description": "User authentication (register, login, whoami)"},
         {"name": "game", "description": "Game management and gameplay"},
+        {"name": "stats", "description": "User score and game history"}, # New tag for stats endpoints
     ]
 )
 
@@ -248,3 +249,72 @@ def list_user_games(current_user: User = Depends(get_current_user)):
         if (game.player_x == current_user.id or game.player_o == current_user.id)
     ]
     return my_games
+
+# ========================== STATS ENDPOINTS ==========================
+
+# PUBLIC_INTERFACE
+class ScoreStats(BaseModel):
+    """User score stats summary."""
+    games_played: int = Field(..., description="Total games played by the user")
+    games_won: int = Field(..., description="Number of games won")
+    games_lost: int = Field(..., description="Number of games lost")
+    games_tied: int = Field(..., description="Number of games tied")
+
+def compute_user_score(user_id: str, all_games: List[Game]) -> ScoreStats:
+    """Calculates win/loss/tie stats for the given user based on finished games."""
+    games_played = 0
+    games_won = 0
+    games_lost = 0
+    games_tied = 0
+
+    for game in all_games:
+        if game.status != GameStatus.FINISHED:
+            continue
+        if user_id not in [game.player_x, game.player_o]:
+            continue
+        games_played += 1
+        # Win
+        if game.winner == user_id:
+            games_won += 1
+        # Tie
+        elif game.winner is None:
+            games_tied += 1
+        # Loss
+        elif (game.player_x == user_id or game.player_o == user_id):
+            games_lost += 1
+
+    return ScoreStats(games_played=games_played, games_won=games_won, games_lost=games_lost, games_tied=games_tied)
+
+@app.get(
+    "/stats/me",
+    summary="Get current user's scores (W/L/T)",
+    description="Returns the current user's score as win/loss/tie stats summary for finished games.",
+    tags=["stats"],
+    response_model=ScoreStats,
+)
+def get_my_score(current_user: User = Depends(get_current_user)):
+    """
+    Returns the authenticated user's scores in terms of games played, won, lost, and tied.
+    Only counts finished games.
+    """
+    all_games = list_games()
+    return compute_user_score(current_user.id, all_games)
+
+@app.get(
+    "/stats/history",
+    summary="Get historical game list for user",
+    description="Returns a chronological list of all games and outcomes for the current user.",
+    tags=["stats"],
+    response_model=List[Game]
+)
+def get_my_game_history(current_user: User = Depends(get_current_user)):
+    """
+    Returns a chronological list (most recent last) of all games for the authenticated user
+    including completed, in-progress, or waiting games.
+    """
+    # Find games involving this user
+    user_games = [
+        game for game in list_games()
+        if game.player_x == current_user.id or game.player_o == current_user.id
+    ]
+    return sorted(user_games, key=lambda g: g.move_history[-1].x if g.move_history else 0)
