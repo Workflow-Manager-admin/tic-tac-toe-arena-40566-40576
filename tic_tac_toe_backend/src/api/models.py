@@ -7,6 +7,7 @@ class User(BaseModel):
     """This model represents a registered user."""
     id: str = Field(..., description="Unique user identifier")
     username: str = Field(..., description="Username")
+    hashed_password: str = Field(None, description="Password hash (internal use only)")
 
 # PUBLIC_INTERFACE
 class PlayerSymbol(str, Enum):
